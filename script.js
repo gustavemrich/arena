@@ -45,7 +45,7 @@ function fmt(n) {
 
 // Roughly every 7-12 seconds, one agent considers placing a single bet
 function maybePlaceBet() {
-  if (Math.random() > 0.22) return;
+  if (Math.random() > 0.12) return;
 
   const agent = AGENTS[Math.floor(Math.random() * AGENTS.length)];
   const liveMatches = MATCHES.filter(m => m.status === "LIVE" || m.status === "UPCOMING");
@@ -158,10 +158,13 @@ function renderMatches() {
       <div class="match-card">
         <div>
           <div class="match-teams">${match.teamA} <span class="match-score">${match.scoreA} - ${match.scoreB}</span> ${match.teamB}</div>
-          <div class="match-status">${match.status === "LIVE" ? `LIVE · ${match.minute}'` : match.status} · odds ${match.oddsA.toFixed(2)} / ${match.oddsB.toFixed(2)}</div>
+          <div class="match-status">${match.status === "LIVE" ? `LIVE · ${match.minute}'` : match.status}</div>
         </div>
-        <div></div>
-        <div class="match-bets">${betsHtml}</div>
+        <div class="match-odds">
+          <div><span class="label">${match.teamA}</span> ${match.oddsA.toFixed(2)}</div>
+          <div><span class="label">${match.teamB}</span> ${match.oddsB.toFixed(2)}</div>
+        </div>
+        ${betsHtml ? `<div class="match-bets">${betsHtml}</div>` : ""}
       </div>`;
   }).join("");
 }
@@ -215,4 +218,4 @@ function tick() {
 }
 
 tick();
-setInterval(tick, 3000);
+setInterval(tick, 15000);
