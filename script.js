@@ -17,18 +17,25 @@ for (let i = 0; i < 6; i++) {
   let a = TEAMS[Math.floor(Math.random() * TEAMS.length)];
   let b;
   do { b = TEAMS[Math.floor(Math.random() * TEAMS.length)]; } while (b === a);
+  // Simulated moneyline odds (decimal), implying a favorite/underdog skew like real sportsbooks
+  const favorsA = Math.random() < 0.5;
+  const oddsA = favorsA ? 1.5 + Math.random() * 0.7 : 2.4 + Math.random() * 1.6;
+  const oddsB = favorsA ? 2.4 + Math.random() * 1.6 : 1.5 + Math.random() * 0.7;
   MATCHES.push({
     id: i,
     teamA: a,
     teamB: b,
     scoreA: 0,
     scoreB: 0,
+    oddsA: Math.round(oddsA * 100) / 100,
+    oddsB: Math.round(oddsB * 100) / 100,
     status: i === 0 ? "LIVE" : i === 1 ? "LIVE" : "UPCOMING",
     minute: Math.floor(Math.random() * 90),
     bets: [],
   });
 }
 
+const PENDING_BETS = [];
 let arenaPrice = 0.042;
 let arenaChange = 0;
 
@@ -36,33 +43,86 @@ function fmt(n) {
   return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function placeRandomBet() {
+// Roughly every 7-12 seconds, one agent considers placing a single bet
+function maybePlaceBet() {
+  if (Math.random() > 0.22) return;
+
   const agent = AGENTS[Math.floor(Math.random() * AGENTS.length)];
   const liveMatches = MATCHES.filter(m => m.status === "LIVE" || m.status === "UPCOMING");
-  if (!liveMatches.length) return;
-  const match = liveMatches[Math.floor(Math.random() * liveMatches.length)];
-  const pick = Math.random() < 0.5 ? match.teamA : match.teamB;
-  if (agent.balance < 5) return;
-  const maxBet = Math.min(agent.balance, 50);
-  const amount = Math.max(1, Math.floor(5 + Math.random() * (maxBet - 5)));
+  if (!liveMatches.length || agent.balance < 5) return;
 
-  const bet = { agent: agent.id, pick, amount, matchId: match.id, time: Date.now() };
+  const match = liveMatches[Math.floor(Math.random() * liveMatches.length)];
+  const pickA = Math.random() < 0.5;
+  const pick = pickA ? match.teamA : match.teamB;
+  const odds = pickA ? match.oddsA : match.oddsB;
+
+  const maxBet = Math.min(agent.balance, 40);
+  if (maxBet < 5) return;
+  const amount = Math.max(5, Math.floor(5 + Math.random() * (maxBet - 5)));
+
+  agent.balance -= amount;
+
+  const bet = {
+    agent: agent.id,
+    pick,
+    amount,
+    odds,
+    matchId: match.id,
+    resolveAtMinute: match.status === "LIVE" ? Math.min(90, match.minute + 5 + Math.floor(Math.random() * 10)) : 90,
+    settled: false,
+  };
   match.bets.push(bet);
   if (match.bets.length > 4) match.bets.shift();
+  PENDING_BETS.push(bet);
 
-  const won = Math.random() < 0.5;
-  const delta = won ? amount * (1 + Math.random()) : -amount;
-  agent.balance += delta;
-
-  addFeedItem(agent, pick, amount, won, match);
+  addFeedItem("placed", agent, bet, match);
 }
 
-function addFeedItem(agent, pick, amount, won, match) {
+function settleBets() {
+  for (const bet of PENDING_BETS) {
+    if (bet.settled) continue;
+    const match = MATCHES[bet.matchId];
+    const matchOver = match.status === "FULL TIME";
+    const reached = match.minute >= bet.resolveAtMinute;
+    if (!matchOver && !reached) continue;
+
+    const agent = AGENTS.find(a => a.id === bet.agent);
+    const leadingA = match.scoreA >= match.scoreB;
+    const won = (bet.pick === match.teamA && leadingA && match.scoreA !== match.scoreB) ||
+                (bet.pick === match.teamB && !leadingA);
+    // draw counts as a push (refund) if scores are level
+    const isDraw = match.scoreA === match.scoreB;
+
+    if (isDraw) {
+      agent.balance += bet.amount;
+      addFeedItem("push", agent, bet, match);
+    } else if (won) {
+      const payout = bet.amount * bet.odds;
+      agent.balance += payout;
+      addFeedItem("win", agent, bet, match, payout);
+    } else {
+      addFeedItem("lose", agent, bet, match);
+    }
+    bet.settled = true;
+  }
+}
+
+function addFeedItem(kind, agent, bet, match, payout) {
   const feed = document.getElementById("betFeed");
   const div = document.createElement("div");
   div.className = "bet-feed-item";
-  div.innerHTML = `<span class="agent" style="color:${agent.color}">${agent.name}</span> bet $${amount} on <strong>${pick}</strong> (${match.teamA} vs ${match.teamB}) — ` +
-    (won ? `<span class="win">+$${fmt(amount * 0.8)}</span>` : `<span class="lose">-$${amount}</span>`);
+
+  let html = `<span class="agent" style="color:${agent.color}">${agent.name}</span> `;
+  if (kind === "placed") {
+    html += `placed $${bet.amount} on <strong>${bet.pick}</strong> @ ${bet.odds.toFixed(2)} (${match.teamA} vs ${match.teamB})`;
+  } else if (kind === "win") {
+    html += `won on <strong>${bet.pick}</strong> — <span class="win">+$${fmt(payout - bet.amount)}</span>`;
+  } else if (kind === "lose") {
+    html += `lost on <strong>${bet.pick}</strong> — <span class="lose">-$${bet.amount}</span>`;
+  } else if (kind === "push") {
+    html += `bet on <strong>${bet.pick}</strong> pushed (draw) — refunded $${bet.amount}`;
+  }
+  div.innerHTML = html;
   feed.prepend(div);
   while (feed.children.length > 30) feed.removeChild(feed.lastChild);
 }
@@ -92,13 +152,13 @@ function renderMatches() {
   el.innerHTML = MATCHES.map(match => {
     const betsHtml = match.bets.map(b => {
       const agent = AGENTS.find(a => a.id === b.agent);
-      return `<span class="bet-chip"><span class="dot" style="background:${agent.color}; width:8px; height:8px;"></span>${agent.name}: $${b.amount} on ${b.pick}</span>`;
+      return `<span class="bet-chip"><span class="dot" style="background:${agent.color}; width:8px; height:8px;"></span>${agent.name}: $${b.amount} on ${b.pick} @ ${b.odds.toFixed(2)}</span>`;
     }).join("");
     return `
       <div class="match-card">
         <div>
           <div class="match-teams">${match.teamA} <span class="match-score">${match.scoreA} - ${match.scoreB}</span> ${match.teamB}</div>
-          <div class="match-status">${match.status === "LIVE" ? `LIVE · ${match.minute}'` : match.status}</div>
+          <div class="match-status">${match.status === "LIVE" ? `LIVE · ${match.minute}'` : match.status} · odds ${match.oddsA.toFixed(2)} / ${match.oddsB.toFixed(2)}</div>
         </div>
         <div></div>
         <div class="match-bets">${betsHtml}</div>
@@ -133,11 +193,11 @@ function tickMatches() {
   MATCHES.forEach(match => {
     if (match.status === "LIVE") {
       match.minute += 1;
-      if (Math.random() < 0.08) {
+      if (Math.random() < 0.05) {
         if (Math.random() < 0.5) match.scoreA += 1; else match.scoreB += 1;
       }
       if (match.minute >= 90) match.status = "FULL TIME";
-    } else if (match.status === "UPCOMING" && Math.random() < 0.1) {
+    } else if (match.status === "UPCOMING" && Math.random() < 0.05) {
       match.status = "LIVE";
       match.minute = 0;
     }
@@ -145,8 +205,9 @@ function tickMatches() {
 }
 
 function tick() {
-  placeRandomBet();
   tickMatches();
+  maybePlaceBet();
+  settleBets();
   updateArenaPrice();
   renderLeaderboard();
   renderMatches();
@@ -154,4 +215,4 @@ function tick() {
 }
 
 tick();
-setInterval(tick, 2000);
+setInterval(tick, 3000);
