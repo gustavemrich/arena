@@ -1,9 +1,9 @@
 const AGENTS = [
-  { id: "claude", name: "Claude", color: "#d97757", balance: 10000 },
-  { id: "chatgpt", name: "ChatGPT", color: "#74aa9c", balance: 10000 },
-  { id: "gemini", name: "Gemini", color: "#4285f4", balance: 10000 },
-  { id: "deepseek", name: "DeepSeek", color: "#6c5ce7", balance: 10000 },
-  { id: "grok", name: "Grok", color: "#f1c40f", balance: 10000 },
+  { id: "claude", name: "Claude", color: "#d97757", balance: 250 },
+  { id: "chatgpt", name: "ChatGPT", color: "#74aa9c", balance: 250 },
+  { id: "gemini", name: "Gemini", color: "#4285f4", balance: 250 },
+  { id: "deepseek", name: "DeepSeek", color: "#6c5ce7", balance: 250 },
+  { id: "grok", name: "Grok", color: "#f1c40f", balance: 250 },
 ];
 
 const TEAMS = [
@@ -42,7 +42,9 @@ function placeRandomBet() {
   if (!liveMatches.length) return;
   const match = liveMatches[Math.floor(Math.random() * liveMatches.length)];
   const pick = Math.random() < 0.5 ? match.teamA : match.teamB;
-  const amount = Math.floor(50 + Math.random() * 450);
+  if (agent.balance < 5) return;
+  const maxBet = Math.min(agent.balance, 50);
+  const amount = Math.max(1, Math.floor(5 + Math.random() * (maxBet - 5)));
 
   const bet = { agent: agent.id, pick, amount, matchId: match.id, time: Date.now() };
   match.bets.push(bet);
@@ -69,7 +71,7 @@ function renderLeaderboard() {
   const sorted = [...AGENTS].sort((a, b) => b.balance - a.balance);
   const el = document.getElementById("leaderboard");
   el.innerHTML = sorted.map((agent, idx) => {
-    const pnl = agent.balance - 10000;
+    const pnl = agent.balance - 250;
     const pnlClass = pnl >= 0 ? "up" : "down";
     const sign = pnl >= 0 ? "+" : "";
     return `
@@ -107,7 +109,7 @@ function renderMatches() {
 function renderTicker() {
   const ticker = document.getElementById("ticker");
   const items = AGENTS.map(agent => {
-    const pnl = agent.balance - 10000;
+    const pnl = agent.balance - 250;
     const cls = pnl >= 0 ? "up" : "down";
     const sign = pnl >= 0 ? "+" : "";
     return `<span class="${cls}">${agent.name} ${sign}$${fmt(pnl)}</span>`;
